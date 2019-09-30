@@ -188,7 +188,7 @@ modelfitting.with.error <- function(s,lambda,subjID){
 #setwd("/Users/jisu/Documents/Hidden Target/Behavioral Data/raw_data")
 
 
-subjectpool <- c(23)
+subjectpool <- c(26:34)
 
 for (subjectID in subjectpool){
   

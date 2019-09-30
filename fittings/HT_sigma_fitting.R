@@ -2,10 +2,7 @@
 # For fitting MAP/MIG and saving posterior heatmap
 # Modified 190507 by JISU
 # Modified 190823 by JISU (ver.13)
-# Modified 190828 by JISU (ver.14)
-# Modified 190921 by JISU (ver.15)
-# Modified 190922 by JISU (ver.16)
-# Modified 190929 by JISU (ver.17)
+
 
 library(MASS)
 library(readr)
@@ -14,61 +11,13 @@ library(corpcor)
 library(Hmisc)
 library(reshape2)
 library(ggplot2)
-library(writexl)
+
 
 #### Model Fitting : saving 1.inferences from the models 2.likelihood ####
 
 nx=32
 ny=24
 n=10
-
-
-binorm_js <- function(x, mu, sigma){
-  x1 <- x[1]
-  x2 <- x[2]
-  mu1 <- mu[1]
-  mu2 <- mu[2]
-  
-  sig1 <- sqrt(sigma[1,1])
-  sig2 <- sqrt(sigma[2,2])
-  
-  denom <- 2 * pi * sig1 * sig2 #* sqrt(1-(rho^2)) 
-  
-  z1 <- (x1 - mu1)^2 / (sig1^2) 
-  #z2 <- (2*(rho)*(x1 - mu1)*(x2 - mu2)) / (sig1 * sig2)
-  z3 <- (x2 - mu2)^2 / (sig2^2)
-  z <- z1 + z3
-  num <- exp(-z / 2)
-  
-  form <- num / denom
-  
-  return(form)
-  
-}
-
-binorm_js_mat <- function(x, mu, sigma){
-  x1 <- x[,1]
-  x2 <- x[,2]
-  mu1 <- mu[1]
-  mu2 <- mu[2]
-  
-  sig1 <- sqrt(sigma[1,1])
-  sig2 <- sqrt(sigma[2,2])
-  
-  denom <- 2 * pi * sig1 * sig2 #* sqrt(1-(rho^2)) 
-  
-  z1 <- (x1 - mu1)^2 / (sig1^2) 
-  #z2 <- (2*(rho)*(x1 - mu1)*(x2 - mu2)) / (sig1 * sig2)
-  z3 <- (x2 - mu2)^2 / (sig2^2)
-  z <- z1 + z3
-  num <- exp(-z / 2)
-  
-  form <- num / denom
-  
-  return(form)
-  
-}
-
 
 modelfitting_MIX <- function(s,lambda, roundn, subjID){
   
@@ -78,7 +27,6 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
   prior <<- data.matrix(pr[,-1])
   
   #### Settings ####
-  
   sigma <- matrix(c(s^2, 0, 0, s^2),nrow=2)
   rho <- 0
   ratio <- 1024/nx
@@ -112,6 +60,10 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
   for (i in 1:10){
     print(paste0("Trial ",i))
     
+    #### Radius and Reward ####
+    if (i == 1){rad <- subdata$Radius[1]/16
+    } else {rad <- subdata$Radius[i-1]/16}
+    
     rew <- subdata$Smiley[i]
     rew_history[i] <- rew
     
@@ -134,7 +86,7 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     
     
     #### MIG fitting and saving ####
-    mig_dataset <- inference_as(prior, sigma)
+    mig_dataset <- inference_as(prior, sigma, rad)
     infer_model.migs <- mig_dataset$`inference mig`
     infer_model.mig <- infer_model.migs[1,]
     mig.history[i,] <- infer_model.mig
@@ -148,10 +100,10 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     
     checker <- matrix(NA, nrow=nx, ncol=ny)
     for(x in 1:nx){for(y in 1:ny){
-      if (sqrt((x-infer[1])^2 + (y-infer[2])^2) < sqrt(sigma[1,1])){ 
-        checker[x,y] <- TRUE
-      } else {checker[x,y] <- FALSE}}}
-    
+        if (sqrt((x-infer[1])^2 + (y-infer[2])^2) < sqrt(sigma[1,1])){ 
+          checker[x,y] <- TRUE
+        } else {checker[x,y] <- FALSE}}}
+      
     prob_reward <- sum(checker * prior)
     prob_reward_history[i] <- prob_reward  
     
@@ -159,6 +111,10 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     #### MAP fitting and saving ####
     infer_model.map <- inference_bs(prior) 
     map.history[i,] <- infer_model.map
+    
+    #migdist <- dist(rbind(infer, infer_model.mig))
+    #mapdist <- dist(rbind(infer, infer_model.map))
+
     
     #### Bayesian Update of Prior ####
     posterior <- bayesian_update(prior, infer, sigma, rew)
@@ -178,26 +134,20 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     
     z.map[i] <- z.prior[infer[1], infer[2]]
     z.mig[i] <- z.ent[infer[1], infer[2]]
-    
+
     mat.z.prior <- melt(z.prior)
     mat.z.ent <- melt(z.ent)
     
-    l.prior <- (2 / (max(mat.z.prior[,3]) - min(mat.z.prior[,3])))  * (z.prior - min(mat.z.prior[,3])) - 1
-    l.ent <- (2 / (max(mat.z.ent[,3]) - min(mat.z.ent[,3])))  * (z.ent - min(mat.z.ent[,3])) - 1
+    l.map[i] <- (2 / (max(mat.z.prior[,3]) - min(mat.z.prior[,3])))  * (z.map[i] - min(mat.z.prior[,3])) - 1
+    l.mig[i] <- (2 / (max(mat.z.ent[,3]) - min(mat.z.ent[,3])))  * (z.mig[i] - min(mat.z.ent[,3])) - 1
     
-    l.map[i] <- l.prior[infer[1], infer[2]]
-    l.mig[i] <- l.ent[infer[1], infer[2]]
-    
-    f.prior <- (1/2) * log((1+l.prior)/(1-l.prior)) 
-    f.ent <- (1/2) * log((1+l.ent)/(1-l.ent)) 
-    
-    f.map[i] <- f.prior[infer[1], infer[2]]
-    f.mig[i] <- f.ent[infer[1], infer[2]]
-    
+    f.map[i] <- (1/2) * log((1+l.map[i])/(1-l.map[i])) 
+    f.mig[i] <- (1/2) * log((1+l.mig[i])/(1-l.mig[i])) 
+   
     map.lkh <- log(prior[infer[1],infer[2]]+0.0000001)
     mig.lkh <- log(entropy_diff_normalized[infer[1],infer[2]]+0.0000001)
     isEmpty <- function(x) {
-      return(length(x)==0)
+    return(length(x)==0)
     }
     
     # index.lkh : prior & entropy difference in the original space
@@ -206,7 +156,7 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     mig.likelihood[i] <- mig.lkh
     
     if (!isEmpty(map.lkh - mig.lkh)){
-      lkh.ratio[i] <- (map.lkh - mig.lkh) 
+    lkh.ratio[i] <- (map.lkh - mig.lkh) 
     } else {lkh.ratio[i] <- NA}
     
     prior <- posterior
@@ -215,10 +165,8 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
     s <- s * lambda^(rew)
     sigma <- matrix(c(s^2, 0, 0, s^2),nrow=2) 
     
-    
-    
   }
-  
+
   #### Save ####
   data = list('treasureX' = treasure_location[1],'treasureY' = treasure_location[2], "prior history" = prior_history, 'inference' = infer_history[-1,],
               'reward history' = rew_history, 'prob reward history' = prob_reward_history, "sigma" = s, "lambda" = lambda, 'entropy diff' = entropy_diff_history[-1,],
@@ -238,7 +186,7 @@ modelfitting_MIX <- function(s,lambda, roundn, subjID){
 #################################
 
 
-inference_as <- function(prior, sigma){
+inference_as <- function(prior, sigma, radius){
   
   #### Setting ####
   entropy_prior <- NA
@@ -251,84 +199,83 @@ inference_as <- function(prior, sigma){
   expected_post <-  matrix(NA, nrow=nx, ncol=ny)
   exp_entropy <- matrix(NA, nrow=nx, ncol=ny)
   
-  coordX <- rep(1:nx, each=ny)
-  coordY <- rep(1:ny, nx)
-  coord <- cbind(coordX, coordY)
   
   #### Probability of Reward ####
   # which is the weight of expected value
   for(a in 1:nx){for(b in 1:ny){
+  
     checker <- matrix(NA, nrow=nx, ncol=ny)
+  
     for(i in 1:nx){for(j in 1:ny){
       if (sqrt((i-a)^2 + (j-b)^2) < sqrt(sigma[1,1])){ 
         checker[i,j] <- TRUE
-      } else {checker[i,j] <- FALSE}}}
+      } else {checker[i,j] <- FALSE
+      }}}
     
     prob_reward[a,b] <- sum(checker * prior)
-    prob_no_reward[a,b] <- 1-prob_reward[a,b]}}
+    prob_no_reward[a,b] <- 1-prob_reward[a,b]
+  }}
   
-  
+
   #### Entropy of prior ####
   entropy_prior <- sum(prior*log2(1/prior), na.rm=TRUE)
   
   #### Entropy of posterior ####
-  
   for(a in 1:nx){for(b in 1:ny){
-    inference <- c(a,b)
-    likelihood_w_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
-    posterior_w_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
-    posterior_wo_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
+ 
+      inference <- c(a,b)
+      likelihood_w_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
+      posterior_w_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
+      posterior_wo_rew <- matrix(data = NA, nrow = nx, ncol = ny, byrow = FALSE, dimnames = NULL)
+      
+      #### Likelihood w/ reward ####
+      # defined as gaussian distribution
+      for(i in 1:nx){for(j in 1:ny){
+          likelihood_w_rew[i,j] <- dmvnorm(c(i,j), c(a,b), sigma)
+        }}  
+      
+      #### Likelihood wo/ reward ####
+      # defined as inverted gaussian
+      likelihood_wo_rew <- (max(likelihood_w_rew)-likelihood_w_rew)
+      
+      #### Posteriors in case of reward / non-reward ####
+      posterior_w_rew <- likelihood_w_rew * prior
+      posterior_wo_rew <- (likelihood_wo_rew) * prior
+
+      posterior_w_rew <- posterior_w_rew  / sum(posterior_w_rew)
+      posterior_wo_rew <- posterior_wo_rew  / sum(posterior_wo_rew)
+      
+      #### Entropy of Posteriors in case of reward / non-reward ####
+      entropy_post_w_rew[a,b] <- sum(posterior_w_rew*log2(1/posterior_w_rew), na.rm=TRUE)
+      entropy_post_wo_rew[a,b] <- sum(posterior_wo_rew*log2(1/posterior_wo_rew), na.rm=TRUE)
+      
+      #### Expected Entropy ####
+      entropy_post[a,b] <- prob_reward[a,b] * entropy_post_w_rew[a,b] + prob_no_reward[a,b] * entropy_post_wo_rew[a,b]
     
-    #### Likelihood w/ reward ####
-    # defined as gaussian distribution
-    
-    #for(i in 1:nx){for(j in 1:ny){
-    #  likelihood_w_rew[i,j] <- binorm_js(c(i,j), c(a,b), sigma)
-    #}}  
-    
-    lkh <- binorm_js_mat(coord, c(a,b), sigma)
-    likelihood_w_rew <- t(matrix(lkh, ncol = nx))
-    
-    
-    #### Likelihood wo/ reward ####
-    # defined as inverted gaussian
-    likelihood_wo_rew <- (max(likelihood_w_rew)-likelihood_w_rew)
-    
-    #### Posteriors in case of reward / non-reward ####
-    posterior_w_rew <- likelihood_w_rew * prior
-    posterior_wo_rew <- (likelihood_wo_rew) * prior
-    
-    posterior_w_rew <- posterior_w_rew  / sum(posterior_w_rew)
-    posterior_wo_rew <- posterior_wo_rew  / sum(posterior_wo_rew)
-    
-    #### Entropy of Posteriors in case of reward / non-reward ####
-    entropy_post_w_rew[a,b] <- sum(posterior_w_rew*log2(1/posterior_w_rew), na.rm=TRUE)
-    entropy_post_wo_rew[a,b] <- sum(posterior_wo_rew*log2(1/posterior_wo_rew), na.rm=TRUE)
-    
-    #### Expected Entropy ####
-    entropy_post[a,b] <- prob_reward[a,b] * entropy_post_w_rew[a,b] + prob_no_reward[a,b] * entropy_post_wo_rew[a,b]
   }}
-  
+
   
   #### Decide the next Inference
   entropy_diff <- (entropy_prior-entropy_post)
   rank.of.mig <- matrix(rank(-entropy_diff),nrow=nx)
+  #inference_mig <- matrix(NA, nrow=10, ncol=2)    
+
   
   alpha <- which(rank.of.mig == 1, arr.ind = TRUE)
   if (nrow(alpha) > 1){
     alpha <- alpha[sample(1:nrow(alpha), 1),]
-  }
+    }
   
   inference_mig <- rbind(which(rank.of.mig == 1, arr.ind = TRUE), which(1 < rank.of.mig & rank.of.mig < 11, arr.ind = TRUE))
   
   if (nrow(inference_mig) > 10){
     inference_mig <- inference_mig[1:10,]
-  }
+    }
   
   if (nrow(inference_mig) < 10){
     namat <- matrix(NA, ncol=2, nrow = 10-nrow(inference_mig))
     inference_mig <- rbind(inference_mig, namat)
-  }
+    }
   
   #### Return the results
   update_dataset <- list('inference' = inference, 'inference mig' = inference_mig, 'posterior_w_rew' = posterior_w_rew, 'posterior_wo_rew' = posterior_wo_rew, 
@@ -370,6 +317,11 @@ inference_bs <- function(prior){ ##
   inference <- which(prior == max(prior), arr.ind=TRUE) #
   inference <- inference[sample(1:nrow(inference), 1),]
   return(inference)
+}
+
+reward_bs <- function(inference, radius, treasure_location){ ##
+  if (sqrt((treasure_location[1]-inference[1])^2 + (treasure_location[2]-inference[2])^2) < radius) return(1)
+  else return(0)
 }
 
 
@@ -520,86 +472,81 @@ gg_multiheatmap_10 <- function(matrix, col){
 
 
 
-subjectpool <- c(23)
+subjectpool <- c(6)
 
 for (subjectID in subjectpool){
-  if (subjectID < 10){
-    filename <- paste0("HT0",subjectID)
-  } else {filename <- paste0("HT",subjectID)}
-  behavdata <- read.csv(paste0("/Volumes/clmnlab/HT/behavior_data/raw_data/",filename,"/",filename,".csv"), header=FALSE)
-  names(behavdata) <- c("subjectID", "Trial", "Smiley", "treasureX", "treasureY", "inferX", "inferY", "Radius", "Distance", "RT", "Certainty")
-  behavdata$subjectID <- subjectID
-  behavdata$Round <- c(rep(1:36, each = 10))
-  behavdata$number <- c(1:(length(behavdata$subjectID)))
-  
-  dir.create(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit"))
-  dir.create(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename))
-  dir.create(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/posterior"))
-  dir.create(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/entropy difference"))
-  datasetname <- paste0(filename,"_mixed.fitted")
-  pilot_mixed.fitted <- matrix(NA,nrow=1,ncol=15)
-  prior.history <- matrix(NA,nrow=1,ncol=24)
-  ent.history <- matrix(NA,nrow=1,ncol=24)
-  
-  
-  start.time <- Sys.time()
-  for (r in 1:36){
-    st.time <- Sys.time()
+    if (subjectID < 10){
+      filename <- paste0("HT0",subjectID)
+    } else {filename <- paste0("HT",subjectID)}
+    behavdata <- read.csv(paste0("/Volumes/clmnlab/HT/behavior_data/raw_data/",filename,"/",filename,".csv"), header=FALSE)
+    names(behavdata) <- c("subjectID", "Trial", "Smiley", "treasureX", "treasureY", "inferX", "inferY", "Radius", "Distance", "RT", "Certainty")
+    behavdata$subjectID <- subjectID
+    behavdata$Round <- c(rep(1:36, each = 10))
+    behavdata$number <- c(1:(length(behavdata$subjectID)))
     
-    data <- modelfitting_MIX((ny/2), 0.78, r, subjectID)
+    dir.create(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename))
     
+    for (sigma1 in c(0.5, 0.6, 0.7, 0.8)){
+      
+      
+    fitname <- paste0("sigma_",sigma1)
     
-    fitted.data <- cbind(data$inference[,1],data$inference[,2],data$`mig history`[,1],data$`mig history`[,2],data$`map history`[,1],data$`map history`[,2],
-                         data$`prob reward history`,data$`reward history`, data$`lkh ratio`, data$`map.likelihood`, data$`mig.likelihood`, 
-                         data$`z.map`, data$`z.mig`, data$`f.map`, data$`f.mig`)
+    dir.create(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname))
     
-    prior.history <- rbind(prior.history, data$`prior_history`)
-    ent.history <- rbind(ent.history, data$`entropy_diff_history`[-1,])
-    pilot_mixed.fitted <- rbind(pilot_mixed.fitted, fitted.data)
+    dir.create(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/posterior"))
+    dir.create(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/entropy difference"))
+    datasetname <- paste0(filename,"_mixed.fitted")
+    pilot_mixed.fitted <- matrix(NA,nrow=1,ncol=15)
+    prior.history <- matrix(NA,nrow=1,ncol=24)
+    ent.history <- matrix(NA,nrow=1,ncol=24)
     
-    dir.create(file.path(dirname(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/newfit_posterior/Round",r,".pdf"))))
-    pdf(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/newfit_posterior/Round",r,".pdf"), width = 13, height = 20)
-    gg_multiheatmap_10_mixmodel(data$`prior history`)
-    dev.off()
+    for (r in 1:36){
+      
+      data <- modelfitting_MIX((ny/2)*sigma1, 0.78, r, subjectID)
+
+      fitted.data <- cbind(data$inference[,1],data$inference[,2],data$`mig history`[,1],data$`mig history`[,2],data$`map history`[,1],data$`map history`[,2],
+                           data$`prob reward history`,data$`reward history`, data$`lkh ratio`, data$`map.likelihood`, data$`mig.likelihood`, 
+                           data$`z.map`, data$`z.mig`, data$`f.map`, data$`f.mig`)
+      
+      prior.history <- rbind(prior.history, data$`prior_history`)
+      ent.history <- rbind(ent.history, data$`entropy_diff_history`[-1,])
+      pilot_mixed.fitted <- rbind(pilot_mixed.fitted, fitted.data)
+      
+      dir.create(file.path(dirname(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/newfit_posterior/Round",r,".pdf"))))
+      pdf(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/newfit_posterior/Round",r,".pdf"), width = 13, height = 20)
+      gg_multiheatmap_10_mixmodel(data$`prior history`)
+      dev.off()
+      
+      ### missing value errors are for missing mig points
+      dir.create(file.path(dirname(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/newfit_entropy difference/Round",r,".pdf"))))
+      pdf(paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/newfit_entropy difference/Round",r,".pdf"), width = 13, height = 20)
+      gg_multiheatmap_10(data$`entropy diff`,"blue")
+      dev.off()
+    } 
+    pilot_mixed.fitted <- pilot_mixed.fitted[-1,]
+    prior.history <- prior.history[-1,]
+    ent.history <- ent.history[-1,]
     
-    ### missing value errors are for missing mig points
-    dir.create(file.path(dirname(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/newfit_entropy difference/Round",r,".pdf"))))
-    pdf(paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/newfit_entropy difference/Round",r,".pdf"), width = 13, height = 20)
-    gg_multiheatmap_10(data$`entropy diff`,"blue")
-    dev.off()
+    label <- ifelse(pilot_mixed.fitted[,15] > pilot_mixed.fitted[,16], "MAP",
+                    ifelse(pilot_mixed.fitted[,15] < pilot_mixed.fitted[,16], "MIG",
+                           "NA"))
+    pilot_mixed.fitted <- cbind(pilot_mixed.fitted, label)
+
+    csvname <- paste0(filename,"_newfitted")
+    write.csv(prior.history, paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/",csvname,"_prior_history.csv"))
+    write.csv(ent.history, paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/",csvname,"_ent_history.csv"))
     
-    ed.time <- Sys.time()
-    print(ed.time - st.time)
-  } 
-  end.time <- Sys.time()
-  print(end.time - start.time)
-  
-  pilot_mixed.fitted <- pilot_mixed.fitted[-1,]
-  prior.history <- prior.history[-1,]
-  ent.history <- ent.history[-1,]
-  
-  label <- ifelse(pilot_mixed.fitted[,14] > pilot_mixed.fitted[,15], "MAP",
-                  ifelse(pilot_mixed.fitted[,14] < pilot_mixed.fitted[,15], "MIG",
-                         "NA"))
-  pilot_mixed.fitted <- cbind(pilot_mixed.fitted, label)
-  
-  csvname <- paste0(filename,"_newfitted")
-  write.csv(prior.history, paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/",csvname,"_prior_history.csv"))
-  write.csv(ent.history, paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/",csvname,"_ent_history.csv"))
-  
-  csvname <- paste0(filename,"_newfitted")
-  write.csv(pilot_mixed.fitted, paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/",csvname,".csv"))
-  pilot_mixed.fitted <-data.frame(pilot_mixed.fitted)
-  write_xlsx(pilot_mixed.fitted, paste0("/Volumes/clmnlab/HT/behavior_data/new_model_fit/",filename,"/",csvname,".xlsx"))
-}
+    csvname <- paste0(filename,"_newfitted")
+    write.csv(pilot_mixed.fitted, paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/",csvname,".csv"))
+    pilot_mixed.fitted <-data.frame(pilot_mixed.fitted)
+    write_xlsx(pilot_mixed.fitted, paste0("/Users/jisu/Documents/Hidden Target/Model Fit/",filename,"/",fitname,"/",csvname,".xlsx"))
+}}
 
 
 
 
-
-
-post <- read.csv("/Volumes/clmnlab/HT/behavior_data/new_model_fit/HT06/HT06_newfitted_prior_history.csv")
-ent <- read.csv("/Volumes/clmnlab/HT/behavior_data/new_model_fit/HT06/HT06_newfitted_ent_history.csv")
+post <- read.csv("/Users/jisu/Documents/Hidden Target/Model Fit/HT06/HT06_newfitted_prior_history.csv")
+ent <- read.csv("/Users/jisu/Documents/Hidden Target/Model Fit/HT06/HT06_newfitted_ent_history.csv")
 
 
 i=1
